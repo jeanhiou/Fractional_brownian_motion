@@ -4,6 +4,7 @@
 #include <math.h>
 #include <vector>
 #include <eigen3/Eigen/Dense>
+#include <eigen3/Eigen/Core>
 #include<random>
 using namespace std;
 
@@ -110,5 +111,63 @@ path<double> hosking(TGen & gen, long n, double H = 0.5, double L = 1. , int cum
   free(phi);
   free(psi);
   free(cov);
+  return sortie;
+};
+
+template<typename TGen>
+path<double> Cholesky(TGen & gen, long n, double H = 0.5, double L = 1. , int cum = 1){
+  int m = pow(n,2);
+  std::normal_distribution<double> G(0,1);
+  Eigen::MatrixXd M_final=Eigen::MatrixXd::Zero(m,m);
+  M_final(0,0) = sqrt(covariance(0,H));
+  Eigen::VectorXd Vector_simul_V = Eigen::VectorXd::Zero(m);
+  Eigen::VectorXd output = Eigen::VectorXd::Zero(m);
+  Eigen::VectorXd new_line = Eigen::VectorXd::Zero(2);
+  for (int i = 0; i< m ; i++)
+  {
+    Vector_simul_V(i) = G(gen);
+  };
+
+  M_final(1,0) = covariance(1,H)/M_final(0,0);
+  M_final(1,1) = sqrt( covariance(0,H) - M_final(1,0));
+
+  output(0) = Vector_simul_V(0);
+  output(1) = Vector_simul_V(0)*M_final(1,0) + Vector_simul_V(1)*M_final(1,1);
+
+  for (int i = 2 ; i < m ; i++ ){
+    new_line.resize(i+1);
+    // creation de la nouvelle ligne //
+    new_line(0) = covariance(i+1,H)/M_final(0,0);
+    for (int j = 1 ; j<i;j++){
+      double somme = 0;
+      for (int k = 0; k <j;k++){
+        somme += M_final(i,k)*M_final(j,k);
+      };
+      new_line(j) = 1/M_final(j,j) * ( covariance(i+1-j,H) - somme);
+    };
+    double somme = 0;
+    for (int k = 0 ; k<i+1; k++){
+      somme += pow(new_line(k),2);
+    };
+    new_line(i) = sqrt( covariance(0,H) - somme ) ;
+
+    // final simulation  //
+    double somme_final = 0;
+    for (int j = 0; j<i+1;j++){
+      somme_final += new_line(j) * Vector_simul_V(j);
+      M_final(i,j) = new_line(j);
+    };
+    output(i) = somme_final ;
+  };
+  double scaling = pow(L/m,H);
+  for(int i=0;i<m;i++) {
+    output[i] = scaling*(output[i]);
+    if (cum && i>0) {
+      output[i] += output[i-1]; } ;
+  };
+  path<double> sortie(m);
+  for (int i = 0;i<m;i++){
+    sortie[i] = { i / float(m-1) , output[i] };
+  };
   return sortie;
 };
