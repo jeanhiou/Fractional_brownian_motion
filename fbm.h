@@ -1,93 +1,114 @@
 #include<iostream>
+#include <fstream>
+
+#include <math.h>
+#include <vector>
+#include <eigen3/Eigen/Dense>
 #include<random>
-#include <cmath>
-#include <eigen3/Eigen/dense>
-
 using namespace std;
-using namespace Eigen;
 
-double covariance(int i, double H){
-  if (i ==0) return 1;
-  else return 0.5*(pow(i-1,2*H)-2*pow(i,2*H)+pow(i+1,2*H));
+template <typename T>
+struct state {
+    double time;
+    T value;
 };
 
-VectorXd c_n(int n, double H = 0.5){
-  VectorXd c(n+1);
-  for (int i = 0;i<n+1;i++){
-    c(i) = covariance(i+1,H);
-  };
-  return c;
+template <typename T>
+std::ostream & operator<<(std::ostream & o, state<T> const & s) {
+    return o << s.time << "\t" << s.value;
+}
+
+template <typename T>
+struct path : protected std::vector<state<T>> {
+    using vec = std::vector<state<T>>;  // alias de nom
+    using vec::vec;             // constructeur de la classe vector utilisable
+    using vec::operator[];      // opérateur [] utilisable (public)
+    using vec::begin;           // itérateurs utilisables (for-range loop)
+    using vec::end;
+    using vec::size;            // utile !
 };
 
-double indicatrice(int i, int j, int n){
-  if ( i = n - j ) return 1.;
-  else return 0;
-};
+template <typename T>
+std::ostream & operator<<(std::ostream & o, path<T> const & p) {
+    for (auto const & st : p)
+        o << st << std::endl;
+    return o << std::endl;
+}
 
-MatrixXd F_matrix(int n ){
-  MatrixXd F_ma(n+1,n+1);
-  for (int i=0;i<n+1;i++){
-    for (int j=0;j<n+1;j++){
-      F_ma(i,j) = indicatrice(i,j,n);
-    };
-  };
-  return F_ma;
-};
-
-struct recu{
-
-  recu(VectorXd d_pre): d_pre(d_pre) {};
-
-  recu operator()(MatrixXd,double,VectorXd,int );
-
-  VectorXd operator()();
-
-private:
-  VectorXd d_pre;
-};
-
-recu recu::operator()(MatrixXd F_n, double gamma,VectorXd d_prec,int n)
+template<typename T>
+void save_fichier_path(string filename, path<T> & p)
 {
-    VectorXd new_d_n(n+1);
-    VectorXd d_plus(1);
-    d_plus(0) = gamma;
-    d_pre = d_pre - gamma * F_n * d_pre;
-    new_d_n << d_pre, d_plus;
-    recu new_d(new_d_n);
-    return new_d;
-};
-
-VectorXd recu::operator()(){
-  return d_pre;
+    ofstream of(filename); // ouverture du fichier
+    for (int i=0; i<p.size() ; i++)
+        of << p[i].time << " " << p[i].value << endl;
+    of.close();           // fermature du fichier
 };
 
 
-double tau(VectorXd cn,MatrixXd F_n, VectorXd dn){
-  return cn.dot( F_n * dn);
+double covariance(int i, double H) {
+  if (i == 0) return 1;
+  else return (pow(i-1,2*H)-2*pow(i,2*H)+pow(i+1,2*H))/2;
 };
 
 
-template <typename TGen>
-double Hosking_method(TGen &gen, int N, double H = 0.5){
+template<typename TGen>
+inline unsigned p2(unsigned n) { unsigned u = 1; return u <<= n; }
 
-  double cova0 = covariance(1,H);
-  double sigma_n = 1- pow(cova0,2);
-  double mu_n = cova0;
-  double tau0 = pow(cova0,2);
-  double tau_n = tau0;
-  MatrixXd F_n(1,1);
-  F_n << 1;
-  VectorXd d_pre;
-  d_pre <<  1;
-  VectorXd cn(1);
-  cn << 1.;
-  recu d(d_pre);
-  double gamma = (cova0-tau0)/sigma_n;
-  for (int j = 1;j<N;j++){
-    sigma_n = sigma_n  - gamma/sigma_n;
-    tau_n = tau(c_n(j,H),F_matrix(j),d(F_matrix(j),gamma,d(),j)());
-    gamma = (covariance(j+1,H)-tau_n)/sigma_n;
+template<typename TGen>
+path<double> hosking(TGen & gen, long n, double H = 0.5, double L = 1. , int cum = 1) {
 
+  long i, j ;
+  int  m = pow(2,n);
+
+  vector<double> output(m);
+
+  double *phi = (double *) calloc(m, sizeof(double));
+  double *psi = (double *) calloc(m, sizeof(double));
+  double *cov = (double *) calloc(m, sizeof(double));
+  double v, scaling;
+
+  std::normal_distribution<double> G(0,1);
+
+  output[0] = G(gen);
+  v = 1;
+  phi[0] = 0;
+  for (i=0; i<m; i++)
+    cov[i] = covariance(i,H);
+
+  /* simulation */
+  for(i=1; i<m; i++) {
+    phi[i-1] = cov[i];
+    for (j=0; j<i-1; j++) {
+      psi[j] = phi[j];
+      phi[i-1] -= psi[j]*cov[i-j-1];
+    }
+    phi[i-1] /= v;
+    for (j=0; j<i-1; j++) {
+      phi[j] = psi[j] - phi[i-1]*psi[i-j-2];
+    }
+    v *= (1-phi[i-1]*phi[i-1]);
+
+    output[i] = 0;
+    for (j=0; j<i; j++) {
+      output[i] += phi[j]*output[i-j-1];
+    }
+    output[i] += sqrt(v)*G(gen);
+  }
+
+  /* rescale to obtain a sample of size 2^(*n) on [0,L] */
+  scaling = pow(L/m,H);
+  for(i=0;i<m;i++) {
+    output[i] = scaling*(output[i]);
+    if (cum && i>0) {
+      output[i] += output[i-1]; } ;
+    }
+  path<double> sortie(m);
+  for (int i = 0;i<m;i++){
+    sortie[i] = { i / float(m-1) , output[i] };
   };
-  return 1.;
+
+  free(phi);
+  free(psi);
+  free(cov);
+  return sortie;
 };
