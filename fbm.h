@@ -11,8 +11,8 @@ double covariance(int i, double H){
   else return 0.5*(pow(i-1,2*H)-2*pow(i,2*H)+pow(i+1,2*H));
 };
 
-Vectorxd c_n(int n, double H = 0.5){
-  Vectorxd c(n+1);
+VectorXd c_n(int n, double H = 0.5){
+  VectorXd c(n+1);
   for (int i = 0;i<n+1;i++){
     c(i) = covariance(i+1,H);
   };
@@ -34,62 +34,60 @@ MatrixXd F_matrix(int n ){
   return F_ma;
 };
 
-double tau(Vectorxd cn,MatrixXd F_n, Vectorxd dn){
-  return cn.dot( F_n * dn);
+struct recu{
+
+  recu(VectorXd d_pre): d_pre(d_pre) {};
+
+  recu operator()(MatrixXd,double,VectorXd,int );
+
+  VectorXd operator()();
+
+private:
+  VectorXd d_pre;
 };
 
-Vectorxd d_n( Vectorxd d_pre, MatrixXd F_n,double gamma,int n){
-  d_plus(0) = gamma;
-  if (n==0){
-    Vectorxd d_n(n+1);
-    d_n(0)=1;
-    return d_n;
-  }
-  else{
-    Vectorxd new_d_n(n+1);
-    Vectorxd d_plus(1);
+recu recu::operator()(MatrixXd F_n, double gamma,VectorXd d_prec,int n)
+{
+    VectorXd new_d_n(n+1);
+    VectorXd d_plus(1);
     d_plus(0) = gamma;
     d_pre = d_pre - gamma * F_n * d_pre;
     new_d_n << d_pre, d_plus;
+    recu new_d(new_d_n);
+    return new_d;
+};
+
+VectorXd recu::operator()(){
+  return d_pre;
+};
 
 
-  }
-}
+double tau(VectorXd cn,MatrixXd F_n, VectorXd dn){
+  return cn.dot( F_n * dn);
+};
 
-template<tynename TGen>
-double Hosking_method(Tgen &gen, int N, double H = 0.5){
+
+template <typename TGen>
+double Hosking_method(TGen &gen, int N, double H = 0.5){
 
   double cova0 = covariance(1,H);
   double sigma_n = 1- pow(cova0,2);
   double mu_n = cova0;
-  double tau_n = pow(cova0,2);
-
-  MatrixXd F_n(1);
-  F_n(0) = 1;
-  Vectorxd d_pre(1);
-  d_pre(0) = 1;
-
-
+  double tau0 = pow(cova0,2);
+  double tau_n = tau0;
+  MatrixXd F_n(1,1);
+  F_n << 1;
+  VectorXd d_pre;
+  d_pre <<  1;
+  VectorXd cn(1);
+  cn << 1.;
+  recu d(d_pre);
+  double gamma = (cova0-tau0)/sigma_n;
   for (int j = 1;j<N;j++){
-    double gamma = (covariance(j+1,H)-tau_n)/sigma_n;
     sigma_n = sigma_n  - gamma/sigma_n;
-    MatrixXd F_n = F_matrix(j);
-    VectorXd d_pre = d_n(d_pre,F_n,gamma,j);
-    VectorXd cn = c_n(j,H);
-    double tau_n = tau(cn,F_n,d_pre);
+    tau_n = tau(c_n(j,H),F_matrix(j),d(F_matrix(j),gamma,d(),j)());
+    gamma = (covariance(j+1,H)-tau_n)/sigma_n;
+
   };
   return 1.;
 };
-
-
-
-
-
-
-
-
-    }
-  }
-
-
-}
