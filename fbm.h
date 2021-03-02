@@ -1,12 +1,17 @@
 #include<iostream>
 #include <fstream>
 
+#include "fft.h"
 #include <math.h>
 #include <vector>
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Core>
 #include<random>
+#include <complex>
+
 using namespace std;
+using namespace std::complex_literals;
+
 
 template <typename T>
 struct state {
@@ -116,7 +121,7 @@ path<double> hosking(TGen & gen, long n, double H = 0.5, double L = 1. , int cum
 
 template<typename TGen>
 path<double> Cholesky(TGen & gen, long n, double H = 0.5, double L = 1. , int cum = 1){
-  int m = pow(n,2);
+  int m = pow(2,n);
   std::normal_distribution<double> G(0,1);
   Eigen::MatrixXd M_final=Eigen::MatrixXd::Zero(m,m);
   M_final(0,0) = sqrt(covariance(0,H));
@@ -170,4 +175,71 @@ path<double> Cholesky(TGen & gen, long n, double H = 0.5, double L = 1. , int cu
     sortie[i] = { i / float(m-1) , output[i] };
   };
   return sortie;
+};
+
+Eigen::VectorXd eigenvalues(long n, double H) {
+  int size = pow(2,n+1);
+  Complex ligne_C[size];
+  Complex z1 = 1i;
+  for (int i = 0 ; i<size;i++){
+    if (i<=pow(2,n))
+    {
+      ligne_C[i] = 0. *z1 +  covariance(i,H);
+    }
+    else
+    {
+      ligne_C[i] = ligne_C[size-i];
+    };
+  };
+  CArray data(ligne_C,size);
+  fft(data);
+  Eigen::VectorXd eigen(size);
+  for (int i = 0; i< size; i++){
+    eigen(i) = real(data[i]);
+  }
+  return eigen;
+};
+
+template<typename TGen>
+path<double> David_and_Harte(TGen & gen, long n, double H = 0.5, double L = 1. , int cum = 1)
+{
+  long m = pow(2,n);
+
+  Eigen::VectorXd eigenvalue = eigenvalues(n,H);
+
+  Complex W[m];
+
+  std::normal_distribution<double> G(0,1);
+  std::complex<double> z1 = 1i;
+
+  W[0] = G(gen);
+  W[m-1] = G(gen);
+  for (int i = 1 ; i< m/2 ; i++ ){
+    double v1 = G(gen);
+    double v2 = G(gen);
+    W[i]   = 1/sqrt(2) * ( v1 + z1 *v2);
+    W[m-i] = 1/sqrt(2) * ( v1 - z1 *v2);
+  };
+
+  for (int i = 0;i<m;i++){
+  W[i] = eigenvalue[i] * W[i] / sqrt(m);
+  }
+
+  CArray data(W,m);
+
+  ifft(data);
+  Eigen::VectorXd output(m/2);
+  double scaling = pow(L*2/m,H);
+  for(int i=0; i<m/2; i++) {
+    output[i] = scaling * (real(data[i]));
+    if (cum && i>0)
+    {
+      output[i] += output[i-1];
+    };
+  };
+  path<double> path_david(m/2);
+  for (int i = 0; i<m/2;i++){
+    path_david[i] = {i*2./m, output[i]};
+  };
+return path_david;
 };
